@@ -210,13 +210,17 @@ class TranscriptModifier:
             df['End'].iloc[0],
             transcript.df['End'].iloc[0])
 
+        # Ensure the source field is correctly set
+        df['source'] = df['source'].iloc[0]
+        transcript.df['source'] = transcript.df['source'].iloc[0]
+
         self.genes[transcript.gene_id] = df
 
     @staticmethod
     def _sort_gtf_key(col):
-        if col.name == 'End':
+        if (col.name == 'End'):
             return -col
-        elif col.name == 'exon_number':
+        elif (col.name == 'exon_number'):
             return col.astype(float)
         else:
             return col
