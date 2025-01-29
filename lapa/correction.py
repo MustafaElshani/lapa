@@ -210,17 +210,13 @@ class TranscriptModifier:
             df['End'].iloc[0],
             transcript.df['End'].iloc[0])
 
-        # Ensure the source field is correctly set
-        df['source'] = df['source'].iloc[0]
-        transcript.df['source'] = transcript.df['source'].iloc[0]
-
         self.genes[transcript.gene_id] = df
 
     @staticmethod
     def _sort_gtf_key(col):
-        if (col.name == 'End'):
+        if col.name == 'End':
             return -col
-        elif (col.name == 'exon_number'):
+        elif col.name == 'exon_number':
             return col.astype(float)
         else:
             return col
@@ -291,14 +287,14 @@ def _transcript_tss_tes(df, threshold=1):
 
 def _save_corrected_gtf(df, gtf, gtf_output, keep_unsupported=False):
     '''
+    Save corrected GTF and return a list of successfully corrected transcripts.
     '''
     modifier = TranscriptModifier(gtf)
+    corrected_transcripts = []
 
     if keep_unsupported:
         for transcript_id in tqdm(modifier._transcript_templetes):
-            transcript = modifier \
-                .fetch_transcript(transcript_id)
-
+            transcript = modifier.fetch_transcript(transcript_id)
             modifier.add_transcript(transcript)
 
     for row in tqdm(df.itertuples(), total=df.shape[0]):
@@ -307,9 +303,7 @@ def _save_corrected_gtf(df, gtf, gtf_output, keep_unsupported=False):
         if templete_transcript not in modifier:
             continue
 
-        transcript = modifier \
-            .fetch_transcript(templete_transcript) \
-            .copy(row.transcript_id)
+        transcript = modifier.fetch_transcript(templete_transcript).copy(row.transcript_id)
 
         if not transcript.valid_five_prime_exon_len(int(row.tss_site)):
             print(f'Transcript {row.transcript_id} is not corrected '
@@ -324,11 +318,13 @@ def _save_corrected_gtf(df, gtf, gtf_output, keep_unsupported=False):
         transcript.update_polyA_site(int(row.polyA_site))
 
         modifier.add_transcript(transcript)
+        corrected_transcripts.append(row.transcript_id)
 
     modifier.to_gtf(gtf_output)
+    return corrected_transcripts
 
 
-def _update_abundace(df_abundance, df_link_counts, keep_unsupported=False):
+def _update_abundace(df_abundance, df_link_counts, corrected_transcripts, keep_unsupported=False):
 
     cols_abundance = df_abundance.columns[:11]
     samples_abundance = df_abundance.columns[11:]
@@ -373,6 +369,12 @@ def _update_abundace(df_abundance, df_link_counts, keep_unsupported=False):
             df_abundance_lapa
         ])
 
+    # Filter out transcripts not present in the corrected GTF
+    corrected_transcripts_set = set(corrected_transcripts)
+    df_abundance_lapa = df_abundance_lapa[
+        df_abundance_lapa.index.isin(corrected_transcripts_set)
+    ]
+
     return df_abundance_lapa.reset_index() \
         .sort_values('annot_transcript_id')
 
@@ -408,10 +410,19 @@ def correct_talon(links_path, read_annot_path, gtf_input,
     df = _transcript_tss_tes(df, threshold=link_threshold)
 
     df_abundance = pd.read_csv(abundance_path, sep='\t')
-    df_abundance_cor = _update_abundace(df_abundance, df, keep_unsupported)
+    corrected_transcripts = _save_corrected_gtf(df, gtf_input, gtf_output, keep_unsupported)
+    df_abundance_cor = _update_abundace(df_abundance, df, corrected_transcripts, keep_unsupported)
     df_abundance_cor[df_abundance.columns].to_csv(
         abundance_output, index=False, sep='\t')
 
     df = df.drop_duplicates(
         subset=['transcript_id', 'tss_site', 'polyA_site'])
-    _save_corrected_gtf(df, gtf_input, gtf_output, keep_unsupported)
+
+    # Debug statements
+    total_transcripts = len(df)
+    filtered_transcripts = len(df_abundance) - len(df_abundance_cor)
+    total_corrected_transcripts = len(df_abundance_cor)
+
+    print(f"Total transcripts corrected in GTF: {total_transcripts}")
+    print(f"Total transcripts filtered as not present in corrected GTF: {filtered_transcripts}")
+    print(f"Total corrected transcripts: {total_corrected_transcripts}")
